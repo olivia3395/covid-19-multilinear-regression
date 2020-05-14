@@ -9,10 +9,10 @@ greater population growth, with more severe aging trend, more developed urbaniza
 
 Keywords: COVID-19; confirmed cases; multi-linear regression; prediction.
 
-![screenshot](doc/home1.png)
+![screenshot](home1.png)
 
-![screenshot](doc/home2.png)
-![screenshot](doc/home3.png)
+![screenshot](home2.png)
+![screenshot](home3.png)
 
-![screenshot](doc/home4.png)
+![screenshot](home4.png)
 
