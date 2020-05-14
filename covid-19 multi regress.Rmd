@@ -1,0 +1,758 @@
+---
+title: "ada final project"
+author: "Yuyao Wang yw3395"
+date: "4/5/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(car)
+library(corrplot)
+```
+
+
+```{r warning=FALSE}
+covid19_confirmed_global=read.csv("~/Desktop/time_series_covid19_confirmed_global.csv", 
+                                  header=T)
+
+dim(covid19_confirmed_global)
+
+
+covid19_confirmed_global=covid19_confirmed_global%>%
+  select(-"Province.State")%>%
+  mutate(cases_sum=rowSums(covid19_confirmed_global[,4:77]))
+
+
+  
+population_by_country_2020 <- read.csv("~/Desktop/population_by_country_2020.csv", 
+                                       header=T)
+
+data1=covid19_confirmed_global%>%
+  left_join(population_by_country_2020,
+            by=c("Country.Region"="Country..or.dependency."))%>%
+  select(-c("Lat","Long",))%>%
+  group_by(Country.Region)%>%
+  mutate(cases_country=sum(cases_sum))
+
+```
+
+```{r}
+write.csv(data1,file="~/Desktop/data1.csv")
+
+# Country (or dependency):
+# This column contains different country's name (235 countries)
+
+# Population (2020):
+# This columns contains the population of different countries
+
+# Yearly Change:
+# This columns contains the population change by yearly
+
+# Net Change:
+# This columns contains the net change of the population
+
+# Density (P/Km²):
+# The column contains the density of the population
+
+# Land Area (Km²):
+# This column contain the land area in terms of kilometer square
+
+# Migrants (net):
+# This column represents the migrants of the countries
+
+# Fert. Rate:
+# This column represents the fertility or the growth rate of individual countries
+
+# Med. Age:
+# This column represents the median age 
+# (Middle Age or the average age) lifespan of the country
+
+# Urban Pop %:
+# This column represents the urban population
+
+# World Share:
+# This column represents the population 
+# contributed to the world's share by individual country
+
+```
+
+```{r warning=FALSE}
+
+data_global=data1[,-c(2:76)]
+
+data_global=data_global[,c(12,1,2:11)]%>%
+  select(-c("Net.Change","Land.Area..Km.."))%>%
+  rename(Population=Population..2020.)%>%
+  distinct()%>%
+  mutate(Fert..Rate=as.double(Fert..Rate),
+         Urban.Pop..=as.double(Urban.Pop..),
+         World.Share=as.double(World.Share),
+         Yearly.Change=as.double(Yearly.Change),
+         Med..Age=as.double(Med..Age))%>%
+  drop_na()%>%
+  rename(cases=cases_country,
+         Density=Density..P.Km..,
+         Popchange=Yearly.Change,
+         Country=Country.Region,
+         Fert=Fert..Rate,
+         MedAge=Med..Age,
+         Migrant=Migrants..net.,
+         Urban=Urban.Pop..,
+         WorldShare=World.Share)%>%
+  mutate(log_cases=log(cases))%>%
+  drop_na()
+
+
+data_global=data_global%>%
+  mutate(log_casespop=log(cases)/log(Population))
+dim(data_global)
+```
+
+```{r}
+write.csv(data_global,file="~/Desktop/data_global.csv")
+```
+
+```{r}
+set.seed(0)
+index=sample(1:158,10)
+
+data_global=read.csv("~/Desktop/data_global.csv")
+
+data_train=data_global[-index,]
+newdata=data_global[index,][,-1]
+newdata
+
+
+head(data_global)
+names(data_global)
+```
+```{r}
+hist(data_global$cases,xlab = "cases", main="Histogram of cases",breaks=50,col="light blue")
+hist(log(data_global$cases),xlab = "log_cases", main="Histogram of log_cases",breaks=50,col="light blue")
+```
+
+```{r warning=FALSE}
+plot(log(data_train$cases))
+
+```
+
+
+
+
+#EDA correlation matrix between continuous variables
+```{r warning=FALSE}
+
+myvars <- c("Population","Popchange","Density","Migrant",
+             "Fert","MedAge","Urban","WorldShare")
+data_global2 <-data_global[myvars]
+data_global2.cor=cor(data_global2)
+data_global2.cor
+corrplot(data_global2.cor)
+
+
+# Since Country is the state with larger scale.
+# We decided to drop the Country variable since it has too many levels.
+```
+
+
+
+
+
+
+```{r warning=FALSE}
+
+#after log transformation, the normality is better than before
+m.full=lm(log(cases)~log(Population)+Popchange+log(Density)+
+            Migrant+Fert+MedAge+Urban+
+          WorldShare,data=data_train)
+
+summary(m.full)
+par(mfrow=c(2,2))
+plot(m.full, which = 1:4)
+
+# Adjusted R-squared:  0.7781 
+# p-value: < 2.2e-16
+```
+
+```{r warning=FALSE}
+
+m.reduced1=lm(log(cases)~log(Population)+Popchange+
+                log(Density)+Fert+MedAge+Urban,data=data_train)
+anova(m.reduced1,m.full)
+# after dropping migrants and wordshare, p-value is 0.4887,
+# thus it is ok to drop it.
+
+summary(m.reduced1)
+# now we have 6 predictors to complete our inference and prediction
+
+# Adjusted R-squared: 0.7741  
+
+# m.reduced1 is ok.
+
+```
+
+
+```{r warning=FALSE}
+m.reduced2=lm(log(cases)~log(Population)+Popchange+MedAge
+               +Urban,data=data_train)
+anova(m.reduced2,m.reduced1)
+
+# However, because p-value here is 1.414e-08 from ANOVA F-test,
+# so there is strong evidence of a difference that m.reduced1 is ok.
+# thus we finally decided not to drop urban factor.
+
+# p-value is 0.2787, thus m.reduced2 is ok.
+
+# thus this is our final model
+
+cor(cbind(log(data_train$Population),data_train$Popchange,
+                
+          data_train$MedAge,data_train$Urban))
+# corr between Popchange, and MedAge is -0.8693872.
+
+
+```
+
+
+```{r}
+myvars2 <- c("Population","Popchange",
+             "MedAge","Urban")
+
+data_train3 <-data_train[myvars2]
+data_train3.cor=cor(data_train3)
+data_train3.cor
+corrplot(data_train3.cor)
+
+```
+
+
+```{r warning=FALSE}
+# also, we consider the migrant_level
+# but we find that it is not very related to the model construction
+
+data_train$migrant_level=ifelse(data_train$Migrant<=0,"out","in")
+data_train$migrant_level=as.factor(data_train$migrant_level)
+
+m.reduced3=lm(log(cases)~log(Population)+Popchange+
+              MedAge+Urban+migrant_level,data=data_train)
+
+anova(m.reduced2,m.reduced3)
+# p-value:  0.8576, m.reduced2 is ok
+
+# thus it is our final model.
+
+```
+
+
+```{r warning=FALSE}
+m.final1=lm(log(cases)~log(Population)+Popchange+MedAge
+               +Urban,data=data_train)
+summary(m.final1)
+# Adjusted R-squared: 0.7732 
+# p-value: < 2.2e-16
+```
+
+
+#model diagnostics
+
+```{r}
+#line plot of the studentized deleted residuals
+
+plot(rstudent(m.final1),main="Line Plot")
+abline(h=0,lty=10,col="dark orange")
+lines(rstudent(m.final1),col=2)
+```
+
+
+
+```{r}
+par(mfrow=c(2,2))
+plot(m.final1, which = 1:4,sub.caption = "Final Model Diagnostic Plots")
+
+
+# 1. pretty close to 0, good
+# 2. looks normal
+# 3. pretty random points
+# 4. only three influencial less than 10% , it is ok
+
+
+```
+
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+m.full<- lm(log(cases)~log(Population)+Popchange+log(Density)+
+            Migrant+Fert+MedAge+Urban+
+          WorldShare,data=data_train)
+
+
+m0<- lm(log(cases)~1,data=data_train)
+
+# this time we try to use stepwise backward method
+
+
+step(m.full,scope=m0,direction=c("backward"))
+```
+
+```{r warning=FALSE}
+m1<-lm(formula = log(cases) ~ log(Population) + Popchange +  log(Density) + Migrant + 
+    MedAge + Urban, data = data_train)
+summary(m1)
+
+anova(m.final1,m1)
+
+# p-value is 0.1201, thus m.final1 is ok
+
+```
+
+
+
+
+```{r warning=FALSE}
+# interaction plot
+m.interact<- lm(log(cases) ~ log(Population) + Popchange + MedAge + Urban
+                +log(Population)*Popchange+log(Population)*MedAge
+                  +log(Population)* Urban + Popchange*MedAge+
+                  Popchange* Urban+MedAge*Urban,data=data_train)
+
+summary(m.interact)
+
+```
+
+```{r}
+step(m.interact,scope=m0,direction=c("backward"))
+```
+
+```{r warning=FALSE}
+m.final2=lm(formula = log(cases) ~ log(Population) + Popchange + MedAge + 
+    Urban + Popchange:MedAge, data = data_train)
+summary(m.final2)
+
+anova(m.final1,m.final2)
+
+# p-value is 0.007628 **
+# there is some suggestive evidence that m.final1 should be rejected
+# and the interaction model m.final2 is more appropriate.
+```
+
+
+```{r}
+par(mfrow=c(2,2))
+plot(m.final2, which = 1:4,sub.caption = "Final Model Diagnostic Plots")
+
+
+# 1. pretty close to 0, good
+# 2. looks normal
+# 3. pretty random points
+# 4. only three influencial less than 10% , it is ok
+```
+
+
+```{r}
+outlierTest(m.final2)
+```
+
+```{r}
+influencePlot(m.final2,main="influence plot")
+infIndexPlot(m.final2, vars=c("Cook","hat","Student"))
+```
+
+
+```{r}
+# question about: 
+# relationship between Confirmed Cases and Urbanization
+
+exp(coef(m.final2)["Urban"])
+
+exp(confint(m.final2)[5,])
+    
+# For the same Population,Popchange, MedAge, 
+# the cases will be increased by 1.015  times as the Urban increased by one unit.
+# 95% confidence interval is between 1.002 and  1.028
+```
+
+
+```{r}
+summary(m.full)
+
+
+# we have known that the number of confirmed cases is related to 
+# Population,Popchange, Median Age and Urbanization
+
+# question: is  there some relationship 
+# beween the number of confirmed cases and WorldShare level?
+
+# beween the number of confirmed cases and Migrant level?
+
+```
+
+```{r warning=FALSE}
+
+# explore: relationship beween the number of confirmed cases and WorldShare level
+sort(data_global$WorldShare)
+data_global$share_level=as.factor(ifelse(data_global$WorldShare<35,"low","high"))
+boxplot(log(cases)~share_level, data=data_global)
+```
+
+
+
+```{r warning=FALSE}
+
+with(data_global, tapply(log(cases), share_level, summary)) # Sumary statistics
+```
+
+```{r warning=FALSE}
+n <- with(data_global, tapply(log(cases), share_level, length))
+
+ybar <- with(data_global, tapply(log(cases), share_level, mean)) 
+
+s <- with(data_global, tapply(log(cases), share_level, sd)) 
+
+round(cbind(n, ybar, s), 4) 
+
+# Estimated difference in means
+exp(as.numeric( ybar[1] - ybar[2] ))
+
+# that mean  the median number of confirmed cases is 
+# with high WorldShare level as same about 10.8 times
+# as with low WorldShare level 
+
+
+t.test(log(cases)~share_level, data=data_global,alternative="greater",var.equal=T)
+# p-value = 6.967e-08
+# Do a 95% confidence interval for the median difference
+log_CI=t.test(log(cases)~share_level, data=data_global,var.equal=T)$conf.int
+CI=exp(log_CI)
+CI
+
+# 95% confidence interval is between 4.6 and 25.4
+```
+
+
+```{r}
+# Plot "density curves" (smoothed-out histograms) of high and low share_level
+xr <- range(data_global$log_cases) * c(0.9, 1.1)
+den.high <- with(data_global, density(log(cases)[share_level=="high"]))
+den.low<- with(data_global, density(log(cases)[share_level=="low"]))
+
+
+plot(den.high$y ~ den.high$x, type="l", 
+     xlim=xr, xlab="log_cases", ylab="Density",col=2) 
+lines(den.low, lty=2,col=6)
+legend("topright", inset=.05, lty=1:2, legend=c("high","low"),fill=c(2,6))
+```
+
+
+```{r warning=FALSE}
+# same with Migrant level
+
+data_global$migrant_level=
+  as.factor(ifelse(data_global$Migrant<=0,"out","in"))
+
+boxplot(log(cases)~migrant_level, data=data_global)
+
+n <- with(data_global, tapply(log(cases), migrant_level, length))
+
+ybar <- with(data_global, tapply(log(cases), migrant_level, mean)) 
+
+s <- with(data_global, tapply(log(cases), migrant_level, sd)) 
+
+round(cbind(n, ybar, s), 4) 
+
+# Estimated difference in means
+exp(as.numeric( ybar[1] - ybar[2] ))
+
+# that mean  the median number of confirmed cases is 
+# with high WorldShare level as same about 7.7 times
+# as with low WorldShare level 
+
+t.test(log(cases)~migrant_level, data=data_global,alternative="greater",var.equal=T)
+# p-value = 0.0000001721
+# Do a 95% confidence interval for the median difference
+log_CI=t.test(log(cases)~migrant_level, data=data_global,var.equal=T)$conf.int
+CI=exp(log_CI)
+CI
+
+# 95% confidence interval is between 3.6and 16.5
+
+
+```
+
+```{r}
+# Plot "density curves" (smoothed-out histograms) of in and out migrant_level
+den.in <- with(data_global, density(log(cases)[migrant_level=="in"]))
+den.out<- with(data_global, density(log(cases)[migrant_level=="out"]))
+
+
+plot(den.in$y ~ den.in$x, type="l", 
+     xlim=xr, xlab="log_cases", ylab="Density",col=3) 
+lines(den.out, lty=2,col=5)
+legend("topright", inset=.05, lty=1:2, legend=c("in","out"),fill=c(3,5))
+```
+
+
+```{r}
+ci_test=predict(m.final2, newdata=newdata, interval="confidence")%>%
+  as_tibble()
+head(ci_test)
+
+ci_train=predict(m.final2, newdata=data_train, interval="confidence")%>%
+  as_tibble()
+head(ci_train)
+```
+
+
+```{r}
+# now we use this model formula to do some predictions
+
+predict1=predict(m.final2, newdata=newdata, interval="prediction")%>%
+  as_tibble()
+
+t1=predict1%>%
+  mutate(true=newdata$log_cases)
+
+
+mse1=mean((t1$fit-t1$true)^2)
+mse1
+
+# mean squared error of test data is 1.412156
+
+predict2=predict(m.final2, newdata=data_train, interval="prediction")%>%
+  as_tibble()
+
+
+t2=predict2%>%
+  mutate(true=data_train$log_cases)
+head(t2)
+
+mse2=mean((t2$fit-t2$true)^2)
+mse2
+
+data_train
+
+
+# mean squared error of train data is 1.379499,
+# the model is good.
+
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(t1$fit,t1$true,col="red",main="test data mse plot")
+abline(0,1,col="purple")
+plot(t2$fit,t2$true,col="orange",main="train data mse plot")
+abline(0,1,col="purple")
+# the two plots are both Consistent with the lines y=x+0
+```
+
+
+
+```{r}
+
+#interaction scatter plot for WorldShare level
+par(mfrow=c(2,2))
+# 
+plot(log(data_global$Population),log(data_global$cases),col="lightgrey",
+     xlab="log(Population)",ylab="log(cases)", 
+     main = "share level with log(Population)")
+
+abline(lm(log(data_global$cases[data_global$share_level=="high"])~
+            log(data_global$Population[data_global$share_level=="high"])),
+       col=2)
+abline(lm(log(data_global$cases[data_global$share_level=="low"])~
+            log(data_global$Population[data_global$share_level=="low"])),
+       col=6)
+
+legend("topleft",legend=c("high","low"),
+       fill=c(2,6))
+# 
+
+plot(data_global$Popchange,log(data_global$cases),col="lightgrey",
+     xlab="Popchange",ylab="log(cases)", 
+     main = "share level with Popchange")
+
+abline(lm(log(data_global$cases[data_global$share_level=="high"])~
+            data_global$Popchange[data_global$share_level=="high"]),
+       col=2)
+abline(lm(log(data_global$cases[data_global$share_level=="low"])~
+            data_global$Popchange[data_global$share_level=="low"]),
+       col=6)
+
+legend("topleft",legend=c("high","low"),
+       fill=c(2,6))
+
+
+
+# 
+plot(data_global$MedAge,log(data_global$cases),col="lightgrey",
+     xlab="MedAge",ylab="log(cases)", 
+     main = "share level with MedAge")
+
+abline(lm(log(data_global$cases[data_global$share_level=="high"])~
+            data_global$MedAge[data_global$share_level=="high"]),
+       col=2)
+abline(lm(log(data_global$cases[data_global$share_level=="low"])~
+            data_global$MedAge[data_global$share_level=="low"]),
+       col=6)
+
+legend("topleft",legend=c("high","low"),
+       fill=c(2,6))
+
+
+
+# 
+plot(data_global$Urban,log(data_global$cases),col="lightgrey",
+     xlab="Urban",ylab="log(cases)", 
+     main = " share level with Urban)")
+
+abline(lm(log(data_global$cases[data_global$share_level=="high"])~
+            data_global$Urban[data_global$share_level=="high"]),
+       col=2)
+abline(lm(log(data_global$cases[data_global$share_level=="low"])~
+            data_global$Urban[data_global$share_level=="low"]),
+       col=6)
+
+legend("topleft",legend=c("high","low"),
+       fill=c(2,6))
+
+
+
+```
+
+
+
+```{r}
+
+#interaction scatter plot for migrant level
+par(mfrow=c(2,2))
+# 
+plot(log(data_global$Population),log(data_global$cases),col="lightgrey",
+     xlab="log(Population)",ylab="log(cases)", 
+     main = "migrant condition with log(Population)")
+
+abline(lm(log(data_global$cases[data_global$migrant_level=="in"])~
+            log(data_global$Population[data_global$migrant_level=="in"])),
+       col=3)
+abline(lm(log(data_global$cases[data_global$migrant_level=="out"])~
+            log(data_global$Population[data_global$migrant_level=="out"])),
+       col=5)
+
+legend("topleft",legend=c("in","out"),
+       fill=c(3,5))
+# 
+
+plot(data_global$Popchange,log(data_global$cases),col="lightgrey",
+     xlab="Popchange",ylab="log(cases)", 
+     main = "migrant condition with Popchange")
+
+abline(lm(log(data_global$cases[data_global$migrant_level=="in"])~
+            data_global$Popchange[data_global$migrant_level=="in"]),
+       col=3)
+abline(lm(log(data_global$cases[data_global$migrant_level=="out"])~
+            data_global$Popchange[data_global$migrant_level=="out"]),
+       col=5)
+
+legend("topleft",legend=c("in","out"),
+       fill=c(3,5))
+
+
+
+# 
+plot(data_global$MedAge,log(data_global$cases),col="lightgrey",
+     xlab="MedAge",ylab="log(cases)", 
+     main = "migrant condition with MedAge")
+
+abline(lm(log(data_global$cases[data_global$migrant_level=="in"])~
+            data_global$MedAge[data_global$migrant_level=="in"]),
+       col=3)
+abline(lm(log(data_global$cases[data_global$migrant_level=="out"])~
+            data_global$MedAge[data_global$migrant_level=="out"]),
+       col=5)
+
+legend("topleft",legend=c("in","out"),
+       fill=c(3,5))
+
+
+
+# 
+plot(data_global$Urban,log(data_global$cases),col="lightgrey",
+     xlab="Urban",ylab="log(cases)", 
+     main = "migrant condition with Urban")
+
+abline(lm(log(data_global$cases[data_global$migrant_level=="in"])~
+            data_global$Urban[data_global$migrant_level=="in"]),
+       col=3)
+abline(lm(log(data_global$cases[data_global$migrant_level=="out"])~
+            data_global$Urban[data_global$migrant_level=="out"]),
+       col=5)
+
+legend("topleft",legend=c("in","out"),
+       fill=c(3,5))
+
+
+
+```
+
+
+
+
+
+```{r warning=FALSE}
+m.cp1=lm(formula = log_casespop~  Popchange + log(Density) + MedAge + 
+    Urban + WorldShare, data = data_train)
+summary(m.cp1)
+
+m.cp0<- lm(log_casespop~1,data=data_train)
+
+# this time we try to use stepwise backward method
+
+
+step(m.cp1,scope=m.cp0,direction=c("backward"))
+
+# p-value is 0.007628 **
+# there is some suggestive evidence that m.final1 should be rejected
+# and the interaction model m.final2 is more appropriate.
+```
+```{r}
+m.cp2=lm(formula = log_casespop ~ Popchange + MedAge + Urban + WorldShare, 
+    data = data_train)
+summary(m.cp2)
+```
+```{r}
+
+#interaction:
+m.cp3=lm(formula = log_casespop ~ Popchange + MedAge + Urban + WorldShare+
+            Popchange *MedAge + Popchange * Urban + Popchange *WorldShare +
+           MedAge* Urban +MedAge*WorldShare+ Urban*WorldShare, 
+    data = data_train)
+summary(m.cp3)
+
+step(m.cp3,scope=m.cp0,direction=c("backward"))
+
+
+```
+
+```{r}
+m.cp4=lm(formula = log_casespop ~ Popchange + MedAge + Urban + WorldShare + 
+    Popchange:MedAge + Popchange:WorldShare, data = data_train)
+exp(summary(m.cp4)$coefficient)
+par(mfrow=c(2,2))
+plot(m.cp4)
+```
+
+```{r}
+
+exp(confint(m.cp4))
+```
+
+
+
+
